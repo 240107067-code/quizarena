@@ -1,0 +1,131 @@
+openapi: 3.0.3
+info:
+  title: QuizArena API
+  version: 1.0.0
+  description: >
+    Contract between frontend/src/services/api.ts and the backend. Written from the frontend
+    service layer (iteration 2). Teacher endpoints need `Authorization: Bearer <token>`;
+    player endpoints need `X-Player-Token`. Errors are `{ "error": "message" }`.
+servers: [{ url: http://localhost:8091 }]
+components:
+  securitySchemes:
+    teacher: { type: http, scheme: bearer }
+    player: { type: apiKey, in: header, name: X-Player-Token }
+  schemas:
+    Error: { type: object, properties: { error: { type: string } }, required: [error] }
+    User: { type: object, properties: { id: { type: integer }, email: { type: string }, name: { type: string } } }
+    AuthResult: { type: object, properties: { token: { type: string }, user: { $ref: '#/components/schemas/User' } } }
+    Question:
+      type: object
+      required: [text, options, correct, timeLimit]
+      properties:
+        id: { type: integer }
+        text: { type: string, minLength: 1, maxLength: 200 }
+        options: { type: array, minItems: 4, maxItems: 4, items: { type: string, minLength: 1, maxLength: 80 } }
+        correct: { type: integer, enum: [0, 1, 2, 3] }
+        timeLimit: { type: integer, enum: [10, 20, 30] }
+    QuizInput:
+      type: object
+      required: [title, questions]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 300 }
+        questions: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/Question' } }
+    Quiz:
+      allOf: [{ $ref: '#/components/schemas/QuizInput' }, { type: object, properties: { id: { type: integer }, updatedAt: { type: string, format: date-time } } }]
+    QuizSummary: { type: object, properties: { id: { type: integer }, title: { type: string }, description: { type: string }, questionCount: { type: integer }, updatedAt: { type: string } } }
+    GameInfo:
+      type: object
+      properties:
+        id: { type: integer }
+        pin: { type: string, pattern: '^\d{6}$' }
+        status: { type: string, enum: [lobby, question, reveal, finished] }
+        quizTitle: { type: string }
+        currentIndex: { type: integer, description: '-1 in the lobby' }
+        totalQuestions: { type: integer }
+        questionStartedAt: { type: integer, nullable: true, description: epoch ms (server clock) }
+        serverNow: { type: integer, description: epoch ms, lets clients compute the countdown }
+    LeaderRow: { type: object, properties: { playerId: { type: integer }, nickname: { type: string }, score: { type: integer }, rank: { type: integer }, lastPoints: { type: integer } } }
+    HostState:
+      type: object
+      properties:
+        game: { $ref: '#/components/schemas/GameInfo' }
+        players: { type: array, items: { type: object, properties: { id: { type: integer }, nickname: { type: string } } } }
+        question: { nullable: true, type: object, properties: { index: { type: integer }, text: { type: string }, options: { type: array, items: { type: string } }, timeLimit: { type: integer }, correct: { type: integer, nullable: true, description: only during reveal } } }
+        answeredCount: { type: integer }
+        distribution: { type: array, nullable: true, items: { type: integer }, description: only during reveal }
+        leaderboard: { type: array, items: { $ref: '#/components/schemas/LeaderRow' } }
+    PlayerState:
+      type: object
+      properties:
+        game: { $ref: '#/components/schemas/GameInfo' }
+        nickname: { type: string }
+        score: { type: integer }
+        rank: { type: integer, nullable: true }
+        playerCount: { type: integer }
+        question: { nullable: true, type: object, properties: { index: { type: integer }, text: { type: string }, optionCount: { type: integer }, timeLimit: { type: integer } }, description: never contains the correct answer }
+        answered: { type: boolean }
+        lastResult: { nullable: true, type: object, properties: { correct: { type: boolean }, points: { type: integer }, correctOption: { type: integer } } }
+    JoinResult: { type: object, properties: { gameId: { type: integer }, playerId: { type: integer }, playerToken: { type: string }, nickname: { type: string } } }
+    GameSummary: { type: object, properties: { id: { type: integer }, pin: { type: string }, quizTitle: { type: string }, status: { type: string }, createdAt: { type: string }, playerCount: { type: integer }, winner: { type: string, nullable: true } } }
+    GameReport:
+      type: object
+      properties:
+        game: { $ref: '#/components/schemas/GameInfo' }
+        questions: { type: array, items: { type: object, properties: { index: { type: integer }, text: { type: string }, options: { type: array, items: { type: string } }, correct: { type: integer }, distribution: { type: array, items: { type: integer } }, noAnswer: { type: integer }, percentCorrect: { type: integer } } } }
+        leaderboard: { type: array, items: { allOf: [{ $ref: '#/components/schemas/LeaderRow' }, { type: object, properties: { correctCount: { type: integer }, answers: { type: array, items: { type: boolean, nullable: true }, description: 'per question: true correct, false wrong, null no answer' } } }] } }
+  responses:
+    Err: { description: error, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+paths:
+  /api/auth/register:
+    post: { summary: Register a teacher, requestBody: { content: { application/json: { schema: { type: object, required: [email, password, name], properties: { email: { type: string }, password: { type: string, minLength: 8 }, name: { type: string, maxLength: 40 } } } } } },
+      responses: { '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResult' } } } }, '400': { $ref: '#/components/responses/Err' }, '409': { $ref: '#/components/responses/Err' } } }
+  /api/auth/login:
+    post: { summary: Log in, requestBody: { content: { application/json: { schema: { type: object, properties: { email: { type: string }, password: { type: string } } } } } },
+      responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/AuthResult' } } } }, '401': { $ref: '#/components/responses/Err' } } }
+  /api/auth/me:
+    get: { security: [{ teacher: [] }], responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }, '401': { $ref: '#/components/responses/Err' } } }
+  /api/auth/logout:
+    post: { security: [{ teacher: [] }], responses: { '204': { description: logged out } } }
+  /api/quizzes:
+    get: { security: [{ teacher: [] }], responses: { '200': { description: my quizzes, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/QuizSummary' } } } } } } }
+    post: { security: [{ teacher: [] }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/QuizInput' } } } },
+      responses: { '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Quiz' } } } }, '400': { $ref: '#/components/responses/Err' } } }
+  /api/quizzes/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { security: [{ teacher: [] }], responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Quiz' } } } }, '404': { $ref: '#/components/responses/Err' } } }
+    put: { security: [{ teacher: [] }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/QuizInput' } } } }, responses: { '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Quiz' } } } }, '400': { $ref: '#/components/responses/Err' }, '404': { $ref: '#/components/responses/Err' } } }
+    delete: { security: [{ teacher: [] }], responses: { '204': { description: deleted }, '404': { $ref: '#/components/responses/Err' } } }
+  /api/games:
+    get: { security: [{ teacher: [] }], summary: Game history, responses: { '200': { description: ok, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/GameSummary' } } } } } } }
+    post: { security: [{ teacher: [] }], summary: Host a quiz, requestBody: { content: { application/json: { schema: { type: object, required: [quizId], properties: { quizId: { type: integer } } } } } },
+      responses: { '201': { description: game in lobby, content: { application/json: { schema: { $ref: '#/components/schemas/GameInfo' } } } }, '400': { $ref: '#/components/responses/Err' }, '404': { $ref: '#/components/responses/Err' } } }
+  /api/games/{id}/host:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { security: [{ teacher: [] }], responses: { '200': { description: host view, content: { application/json: { schema: { $ref: '#/components/schemas/HostState' } } } }, '404': { $ref: '#/components/responses/Err' } } }
+  /api/games/{id}/start:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { security: [{ teacher: [] }], responses: { '200': { description: first question open, content: { application/json: { schema: { $ref: '#/components/schemas/HostState' } } } }, '409': { $ref: '#/components/responses/Err' } } }
+  /api/games/{id}/reveal:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { security: [{ teacher: [] }], responses: { '200': { description: answer revealed, content: { application/json: { schema: { $ref: '#/components/schemas/HostState' } } } }, '409': { $ref: '#/components/responses/Err' } } }
+  /api/games/{id}/next:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { security: [{ teacher: [] }], responses: { '200': { description: next question or finished, content: { application/json: { schema: { $ref: '#/components/schemas/HostState' } } } }, '409': { $ref: '#/components/responses/Err' } } }
+  /api/games/{id}/report:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { security: [{ teacher: [] }], responses: { '200': { description: report, content: { application/json: { schema: { $ref: '#/components/schemas/GameReport' } } } }, '404': { $ref: '#/components/responses/Err' } } }
+  /api/play/{pin}:
+    parameters: [{ name: pin, in: path, required: true, schema: { type: string } }]
+    get: { summary: Find an open game by PIN (no auth), responses: { '200': { description: found, content: { application/json: { schema: { type: object, properties: { gameId: { type: integer }, quizTitle: { type: string }, status: { type: string } } } } } }, '400': { $ref: '#/components/responses/Err' }, '404': { $ref: '#/components/responses/Err' } } }
+  /api/play/{pin}/join:
+    parameters: [{ name: pin, in: path, required: true, schema: { type: string } }]
+    post: { requestBody: { content: { application/json: { schema: { type: object, required: [nickname], properties: { nickname: { type: string, maxLength: 20 } } } } } },
+      responses: { '201': { description: joined, content: { application/json: { schema: { $ref: '#/components/schemas/JoinResult' } } } }, '400': { $ref: '#/components/responses/Err' }, '404': { $ref: '#/components/responses/Err' }, '409': { $ref: '#/components/responses/Err' } } }
+  /api/games/{id}/player:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { security: [{ player: [] }], responses: { '200': { description: phone view, content: { application/json: { schema: { $ref: '#/components/schemas/PlayerState' } } } }, '401': { $ref: '#/components/responses/Err' } } }
+  /api/games/{id}/answers:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { security: [{ player: [] }], requestBody: { content: { application/json: { schema: { type: object, required: [questionIndex, option], properties: { questionIndex: { type: integer }, option: { type: integer, enum: [0, 1, 2, 3] } } } } } },
+      responses: { '201': { description: accepted, content: { application/json: { schema: { type: object, properties: { accepted: { type: boolean } } } } } }, '400': { $ref: '#/components/responses/Err' }, '401': { $ref: '#/components/responses/Err' }, '409': { $ref: '#/components/responses/Err' } } }
